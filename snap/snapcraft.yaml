@@ -1,9 +1,9 @@
-name: boot-fw-mtk-g1200evk-p1v2
+name: boot-fw-mtk-g1200evkufs-p1v2
 base: core22
 version: '23.1'
-summary: Boot firmware for MeidaTek Genio 1200 EVK P1V2 platform
+summary: Boot firmware for MeidaTek Genio 1200 EVK UFS P1V2 platform
 description: |
-  This snap includes boot firmware for MediaTek Genio 1200 EVK P1V2 platform.
+  This snap includes boot firmware for MediaTek Genio 1200 EVK UFS P1V2 platform.
   Boot firmware includes lk.bin, bl2.img, fip.bin, u-boot-initial-env, and
   device tree.
 
@@ -50,9 +50,9 @@ parts:
       chdist -d tmp -a arm64 apt-get ubuntu download ${MODULE_PKG_NAME}
       dpkg-deb --extract linux-modules-*-mtk_*_arm64.deb tmp
       
-      find tmp/lib/firmware/*/device-tree/mediatek/{genio-1200-evk.dtb,genio-1200-evk,mt8395} \
+      find tmp/lib/firmware/*/device-tree/mediatek/{genio-1200-evk-ufs.dtb,genio-1200-evk,mt8395} \
           \( -name '*.dtb' -or -name '*.dtbo' \) \
-          -exec install -D -t tmp/FIRMWARE/mediatek/genio-1200-evk/ {} +
+          -exec install -D -t tmp/FIRMWARE/mediatek/genio-1200-evk-ufs/ {} +
 
       fallocate -l 32M firmware.vfat
       mkfs.vfat firmware.vfat
