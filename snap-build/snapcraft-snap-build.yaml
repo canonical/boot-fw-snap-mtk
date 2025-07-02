@@ -1,8 +1,21 @@
-# This file is for test only. Replace snap/snapcraft.yaml with this file to
-# build boot firmware from source.
-# MediaTek builds boot firmware by Yocto recipes. MediaTek recommends
-# building boot firmware by Yocto recipes because only the Yocto build is
-# verified by MediaTek.
+# MediaTek builds boot firmware using Yocto recipes. MediaTek recommends
+# building boot firmware with Yocto because only the Yocto-based build
+# is verified by MediaTek.
+#
+# This file is for testing purposes only. Replace snap/snapcraft.yaml with
+# this file to build the boot firmware from source.
+#
+# Supported build commands:
+#
+# 1. Build inside an LXD container
+# This token file is intended for local use only. Please keep it private and do
+# not share it.
+# $ echo YOUR_TOKEN > configs/token
+# $ sudo snapcraft --use-lxd -v
+#
+# 2. Build on the host machine
+# $ sudo GIT_TOKEN=YOUR_TOKEN SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft -v
+#
 name: boot-fw-mtk-g1200evk-p1v2
 base: core22
 version: '24.1'
@@ -15,7 +28,7 @@ description: |
 grade: stable
 confinement: strict
 architectures:
-  - build-on: [amd64, arm64]
+  - build-on: amd64
     build-for: arm64
 
 environment:
@@ -29,20 +42,19 @@ build-packages:
   - device-tree-compiler
   - devscripts
   - dosfstools
+  - efitools
   - flex
-  - libssl-dev:${CRAFT_TARGET_ARCH}
-  - libncurses-dev:${CRAFT_TARGET_ARCH}
+  - gcc-aarch64-linux-gnu
+  - g++-aarch64-linux-gnu
   - mtools
   - python3
+  - python3-cryptography
   - python3-pyelftools
   - u-boot-tools
-  - to arm64:
-    - on arm64:
-      - gcc
-      - g++
-    - else:
-      - gcc-aarch64-linux-gnu
-      - g++-aarch64-linux-gnu
+  # for building U-Boot utilities on the host
+  - libgnutls28-dev
+  - libssl-dev
+  - uuid-dev
 
 parts:
   boot-firmware:
@@ -89,13 +101,13 @@ parts:
     override-pull: |
       craftctl default
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/u-boot/files/"
-      wget ${SRC_URL}/0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
+      curl -L -O ${SRC_URL}/0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-bsp/u-boot/files/"
-      wget ${SRC_URL}/ab-fwupdate.cfg
-      wget ${SRC_URL}/fdt-env.cfg
-      wget ${SRC_URL}/secure-boot.cfg
-      wget ${SRC_URL}/u-boot-env.cfg
-      wget ${SRC_URL}/u-boot-tee.cfg
+      curl -L -O ${SRC_URL}/ab-fwupdate.cfg
+      curl -L -O ${SRC_URL}/fdt-env.cfg
+      curl -L -O ${SRC_URL}/secure-boot.cfg
+      curl -L -O ${SRC_URL}/u-boot-env.cfg
+      curl -L -O ${SRC_URL}/u-boot-tee.cfg
       echo "applying required MediaTek patches"
       git apply -v \
         0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
@@ -111,7 +123,7 @@ parts:
         scripts/kconfig/merge_config.sh -m .config ${CRAFT_PROJECT_DIR}/configs/u-boot-unsetted-configs.cfg
       fi
 
-      make -j$(nproc) V=1 -Wl,--enable-new-dtags -Wl,-O1 -Wl,--allow-shlib-undefined all
+      make V=1 -j$(nproc) all
 
       # For security reasons, MediaTek marks certain U-Boot environment variables as read-only by adding them to the device tree.
       # For more details, please refer to the link below.
@@ -139,14 +151,26 @@ parts:
 
   # Repositories that require NDA contract to access
   libefuse-pta-prebuilt:
-    plugin: dump
-    source-type: git
-    source: git@gitlab.com:mediatek/aiot/nda/libefuse-pta-prebuilt.git
-    #source-branch: main
-    source-commit: 9cc7a4b98344c8839c3db0a202c57b1a1c49777c
-    source-depth: 1
-    organize:
-      mt8195: usr/lib
+    plugin: nil
+    build-environment:
+      - COMMIT_ID: 9cc7a4b98344c8839c3db0a202c57b1a1c49777c
+      - SOC_PLATFORM: mt8195
+    override-pull: |
+      set +x
+      if [ -z "${GIT_TOKEN:-}" ]; then
+        TOKEN_FILE="${CRAFT_PROJECT_DIR}/configs/token"
+        if [ -f "$TOKEN_FILE" ]; then
+          export GIT_TOKEN=$(<"$TOKEN_FILE")
+        else
+          echo "ERROR: GIT_TOKEN is not set and token file not found at $TOKEN_FILE" >&2
+          exit 1
+        fi
+      fi
+      git clone https://oauth2:${GIT_TOKEN}@gitlab.com/mediatek/aiot/nda/libefuse-pta-prebuilt.git .
+      git checkout ${COMMIT_ID}
+    override-build: |
+      mkdir -p "${CRAFT_PART_INSTALL}"/usr/lib
+      cp ${SOC_PLATFORM}/libefuse.a "${CRAFT_PART_INSTALL}"/usr/lib/
     stage:
       - usr/lib
     prime:
@@ -216,9 +240,9 @@ parts:
     override-pull: |
       craftctl default
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-security/optee/optee-os/"
-      wget ${SRC_URL}/0001-allow-setting-sysroot-for-libgcc-lookup.patch
-      wget ${SRC_URL}/0002-allow-setting-sysroot-for-clang.patch
-      wget ${SRC_URL}/0003-core-add-support-for-EARLY_TA_DIR.patch
+      curl -L -O ${SRC_URL}/0001-allow-setting-sysroot-for-libgcc-lookup.patch
+      curl -L -O ${SRC_URL}/0002-allow-setting-sysroot-for-clang.patch
+      curl -L -O ${SRC_URL}/0003-core-add-support-for-EARLY_TA_DIR.patch
       echo "applying required MediaTek patches"
       git apply -v \
         0001-allow-setting-sysroot-for-libgcc-lookup.patch \
@@ -286,18 +310,18 @@ parts:
     override-pull: |
       craftctl default
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/trusted-firmware-a/files/"
-      wget ${SRC_URL}/rot_key.pem
+      curl -L -O ${SRC_URL}/rot_key.pem
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/mtk-secure-boot-tools/test-keys/"
-      wget ${SRC_URL}/da.pem
-      wget ${SRC_URL}/efuse.pem
+      curl -L -O ${SRC_URL}/da.pem
+      curl -L -O ${SRC_URL}/efuse.pem
       SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-bsp/u-boot/files/"
-      wget ${SRC_URL}/u-boot.crt
-      wget ${SRC_URL}/u-boot.key
-      wget ${SRC_URL}/u-boot-img.crt
-      wget ${SRC_URL}/u-boot-img.key
-      wget ${SRC_URL}/secure-cap.dts
-      wget ${SRC_URL}/u-boot-cap.crt
-      wget ${SRC_URL}/u-boot-cap.key
+      curl -L -O ${SRC_URL}/u-boot.crt
+      curl -L -O ${SRC_URL}/u-boot.key
+      curl -L -O ${SRC_URL}/u-boot-img.crt
+      curl -L -O ${SRC_URL}/u-boot-img.key
+      curl -L -O ${SRC_URL}/secure-cap.dts
+      curl -L -O ${SRC_URL}/u-boot-cap.crt
+      curl -L -O ${SRC_URL}/u-boot-cap.key
       cp *.pem *.crt *.key "${CRAFT_PART_INSTALL}"
     override-build: |
       cert-to-efi-sig-list u-boot-cap.crt u-boot-cap
@@ -337,13 +361,13 @@ parts:
       source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
       if [ "$PLATFORM" != "mt8365" ]; then
           SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/trusted-firmware-a/files/"
-          wget ${SRC_URL}/0001-tf-a-auth-add-support-for-HW-crypto.patch
+          curl -L -O ${SRC_URL}/0001-tf-a-auth-add-support-for-HW-crypto.patch
           echo "applying required MediaTek patches"
           git apply -v 0001-tf-a-auth-add-support-for-HW-crypto.patch
       fi
       # git clone submodule for secure boot
       if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
-        git clone --branch v2.26.0 git@github.com:Mbed-TLS/mbedtls.git
+        git clone --branch v2.26.0 https://github.com/Mbed-TLS/mbedtls.git
         cd mbedtls
         git checkout e483a77c85e1f9c1dd2eb1c5a8f552d2617fe400
         cd -
@@ -417,7 +441,7 @@ parts:
         -exec install -D -t tmp/FIRMWARE/mediatek/${INSTDIR}/ {} +
 
       # Download fdt.its for creating signed DT fitimage
-      wget https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-core/board-assets/files/fdt.its
+      curl -L -O https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-core/board-assets/files/fdt.its
     override-build: |
       source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
       if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
@@ -445,13 +469,9 @@ parts:
       - trusted-firmware-a
       - u-boot-mtk
     plugin: nil
-    # MediaTek tools for secure boot: Repositories that require NDA contract to access
-    source-type: git
-    source: git@gitlab.com:mediatek/aiot/nda/mtk-secure-boot-tools.git
-    #source-branch: python3
-    source-commit: 50dbe8868df51adfc197a1395a202583e2ddbd2d
-    source-depth: 1
     build-environment:
+      - GIT_BRANCH: python3
+      - COMMIT_ID: 50dbe8868df51adfc197a1395a202583e2ddbd2d
       - MEDIA: emmc
       - BL2: ${CRAFT_STAGE}/bl2.bin
       - BL31: ${CRAFT_STAGE}/bl31.bin
@@ -461,6 +481,20 @@ parts:
       - SOC: MT8195
       - SIGN_EN: 0
       - SIGN_ARGS: sha256
+    override-pull: |
+      set +x
+      if [ -z "${GIT_TOKEN:-}" ]; then
+        TOKEN_FILE="${CRAFT_PROJECT_DIR}/configs/token"
+        if [ -f "$TOKEN_FILE" ]; then
+          export GIT_TOKEN=$(<"$TOKEN_FILE")
+        else
+          echo "ERROR: GIT_TOKEN is not set and token file not found at $TOKEN_FILE" >&2
+          exit 1
+        fi
+      fi
+      # MediaTek tools for secure boot: Repositories that require NDA contract to access
+      git clone -b ${GIT_BRANCH} https://oauth2:${GIT_TOKEN}@gitlab.com/mediatek/aiot/nda/mtk-secure-boot-tools.git .
+      git checkout ${COMMIT_ID}
     override-build: |
       source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
       if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
