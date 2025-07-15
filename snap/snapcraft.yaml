@@ -1,6 +1,6 @@
 name: boot-fw-mtk-g510evk-p1v1
 base: core22
-version: '24.0'
+version: '24.1'
 summary: Boot firmware for MeidaTek Genio 510 EVK P1V1 platform
 description: |
   This snap includes boot firmware for MediaTek Genio 510 EVK P1V1 platform.

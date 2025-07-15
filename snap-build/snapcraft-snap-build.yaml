@@ -1,11 +1,24 @@
-# This file is for test only. Replace snap/snapcraft.yaml with this file to
-# build boot firmware from source.
-# MediaTek builds boot firmware by Yocto recipes. MediaTek recommends
-# building boot firmware by Yocto recipes because only the Yocto build is
-# verified by MediaTek.
+# MediaTek builds boot firmware using Yocto recipes. MediaTek recommends
+# building boot firmware with Yocto because only the Yocto-based build
+# is verified by MediaTek.
+#
+# This file is for testing purposes only. Replace snap/snapcraft.yaml with
+# this file to build the boot firmware from source.
+#
+# Supported build commands:
+#
+# 1. Build inside an LXD container
+# This token file is intended for local use only. Please keep it private and do
+# not share it.
+# $ echo YOUR_TOKEN > configs/token
+# $ sudo snapcraft --use-lxd -v
+#
+# 2. Build on the host machine
+# $ sudo GIT_TOKEN=YOUR_TOKEN SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft -v
+#
 name: boot-fw-mtk-g510evk-p1v1
 base: core22
-version: '24.0'
+version: '24.1'
 summary: Boot firmware for MeidaTek Genio 510 EVK P1V1 platform
 description: |
   This snap includes boot firmware for MediaTek Genio 510 EVK P1V1 platform.
@@ -15,7 +28,7 @@ description: |
 grade: stable
 confinement: strict
 architectures:
-  - build-on: [amd64, arm64]
+  - build-on: amd64
     build-for: arm64
 
 environment:
@@ -27,31 +40,44 @@ build-packages:
   - bison
   - build-essential
   - device-tree-compiler
+  - devscripts
+  - dosfstools
+  - efitools
   - flex
-  - libssl-dev:${CRAFT_TARGET_ARCH}
-  - libncurses-dev:${CRAFT_TARGET_ARCH}
+  - gcc-aarch64-linux-gnu
+  - g++-aarch64-linux-gnu
+  - mtools
   - python3
+  - python3-cryptography
   - python3-pyelftools
   - u-boot-tools
-  - to arm64:
-    - on arm64:
-      - gcc
-      - g++
-    - else:
-      - gcc-aarch64-linux-gnu
-      - g++-aarch64-linux-gnu
+  # for building U-Boot utilities on the host
+  - libgnutls28-dev
+  - libssl-dev
+  - uuid-dev
 
 parts:
   boot-firmware:
-    source: boot-firmware/
     plugin: dump
+    source-type: git
+    source: https://gitlab.com/mediatek/genio/boot-firmware.git
+    source-tag: 24.1-ubuntu1
+    source-subdir: genio-510-evk
+    source-depth: 1
+    override-stage: |
+      craftctl default
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        sed -i 's/dtbprobe/fdtprobe/g' usr/lib/boot-firmware/u-boot-initial-env
+      fi
     organize:
-      '*.vfat': usr/lib/boot-firmware/
-      'u-boot-initial-env': usr/lib/boot-firmware/
+      'bootassets.vfat': usr/lib/boot-firmware/
       'lk.bin': usr/lib/boot-firmware/
-    prime:
+      'u-boot-initial-env': usr/lib/boot-firmware/
+    stage:
       - -bl2.img
       - -fip.bin
+      - -snapshot.xml
 
   copyright:
     source: copyright
@@ -60,38 +86,54 @@ parts:
       '*': usr/share/doc/boot-firmware/
 
   u-boot-mtk:
+    after:
+      - test-keys
     plugin: nil
     source-type: git
     source: https://gitlab.com/mediatek/aiot/bsp/u-boot.git
     #source-branch: mtk-v2022.10
-    source-commit: 1d6626ab6e27b991c9f0159462d945d64c2aa9ec
+    source-commit: f7a807b03b17670f841b0c173c5a80c6d0d862fb
     source-depth: 1
     build-environment:
+      - SOURCE_TAG: rity-kirkstone-v24.1
       - CROSS_COMPILE: "${CRAFT_ARCH_TRIPLET}-"
       - U_BOOT_CONFIG: genio_510_evk_defconfig
     override-pull: |
       craftctl default
-      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/rity-kirkstone-v24.0/recipes-bsp/u-boot/files/"
-      wget ${SRC_URL}/0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
-      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/rity-kirkstone-v24.0/meta/recipes-bsp/u-boot/files/"
-      wget ${SRC_URL}/0001-cmd-Add-new-command-to-source-embedded-script.patch
-      wget ${SRC_URL}/0001-cmd-Add-new-command-dtbprobe.patch
-      wget ${SRC_URL}/0001-GENIO-cmd-add-support-for-fdtprobe-command.patch
-      wget ${SRC_URL}/0001-GENIO-board-mediatek-add-AB-firmware-updates-support.patch
-      wget ${SRC_URL}/ab-fwupdate.cfg
-      wget ${SRC_URL}/fdt-env.cfg
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/u-boot/files/"
+      curl -L -O ${SRC_URL}/0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-bsp/u-boot/files/"
+      curl -L -O ${SRC_URL}/ab-fwupdate.cfg
+      curl -L -O ${SRC_URL}/fdt-env.cfg
+      curl -L -O ${SRC_URL}/secure-boot.cfg
+      curl -L -O ${SRC_URL}/u-boot-env.cfg
+      curl -L -O ${SRC_URL}/u-boot-tee.cfg
       echo "applying required MediaTek patches"
       git apply -v \
-        0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch \
-        0001-cmd-Add-new-command-to-source-embedded-script.patch \
-        0001-cmd-Add-new-command-dtbprobe.patch \
-        0001-GENIO-cmd-add-support-for-fdtprobe-command.patch \
-        0001-GENIO-board-mediatek-add-AB-firmware-updates-support.patch
+        0001-Revert-cmd-pxe_utils-Check-fdtcontroladdr-in-label_b.patch
     override-build: |
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
       make -j$(nproc) "${U_BOOT_CONFIG}"
       scripts/kconfig/merge_config.sh -m .config ab-fwupdate.cfg
       scripts/kconfig/merge_config.sh -m .config fdt-env.cfg
-      make -j$(nproc) V=1 -Wl,--enable-new-dtags -Wl,-O1 -Wl,--allow-shlib-undefined all
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        scripts/kconfig/merge_config.sh -m .config secure-boot.cfg
+        scripts/kconfig/merge_config.sh -m .config u-boot-env.cfg # For Ubuntu secure boot
+        scripts/kconfig/merge_config.sh -m .config u-boot-tee.cfg # For Ubuntu secure boot
+        scripts/kconfig/merge_config.sh -m .config ${CRAFT_PROJECT_DIR}/configs/u-boot-unsetted-configs.cfg
+      fi
+
+      make V=1 -j$(nproc) all
+
+      # For security reasons, MediaTek marks certain U-Boot environment variables as read-only by adding them to the device tree.
+      # For more details, please refer to the link below.
+      # https://gitlab.com/mediatek/aiot/rity/meta-rity/-/blob/rity-kirkstone-v24.1/meta/recipes-bsp/u-boot/u-boot_git.bbappend?ref_type=tags#L64
+      # This U-Boot build does not enforce that restriction, as it is intended for development, not production.
+
+      # Apply the secure-cap.dtbo overlay to the u-boot.dtb binary to enable verification of capsule update files.
+      fdtoverlay -i u-boot.dtb -o u-boot.dtb -v ${CRAFT_STAGE}/keys/secure-cap.dtbo
+      cat u-boot-nodtb.bin u-boot.dtb > u-boot.bin
+
       cp u-boot.bin "${CRAFT_PART_INSTALL}"
       cp tools/mkimage "${CRAFT_PART_INSTALL}"
     prime:
@@ -109,21 +151,65 @@ parts:
 
   # Repositories that require NDA contract to access
   libefuse-pta-prebuilt:
-    plugin: dump
-    source-type: git
-    source: git@gitlab.com:mediatek/aiot/nda/libefuse-pta-prebuilt.git
-    #source-branch: main
-    source-commit: a3a906aef98ffa3c5bee2a5f86feab0f73199c09
-    source-depth: 1
-    organize:
-      mt8370: usr/lib
+    plugin: nil
+    build-environment:
+      - COMMIT_ID: 9cc7a4b98344c8839c3db0a202c57b1a1c49777c
+      - SOC_PLATFORM: mt8370
+    override-pull: |
+      set +x
+      if [ -z "${GIT_TOKEN:-}" ]; then
+        TOKEN_FILE="${CRAFT_PROJECT_DIR}/configs/token"
+        if [ -f "$TOKEN_FILE" ]; then
+          export GIT_TOKEN=$(<"$TOKEN_FILE")
+        else
+          echo "ERROR: GIT_TOKEN is not set and token file not found at $TOKEN_FILE" >&2
+          exit 1
+        fi
+      fi
+      git clone https://oauth2:${GIT_TOKEN}@gitlab.com/mediatek/aiot/nda/libefuse-pta-prebuilt.git .
+      git checkout ${COMMIT_ID}
+    override-build: |
+      mkdir -p "${CRAFT_PART_INSTALL}"/usr/lib
+      cp ${SOC_PLATFORM}/libefuse.a "${CRAFT_PART_INSTALL}"/usr/lib/
     stage:
       - usr/lib
     prime:
         - -*
 
+  edk2-submodule:
+    plugin: nil
+    build-environment:
+      - GCC5_AARCH64_PREFIX: "${CRAFT_ARCH_TRIPLET}-"
+      - WORKSPACE: "${CRAFT_PART_BUILD}"
+      - EDK_TOOLS_PATH: "${CRAFT_PART_BUILD}/edk2/BaseTools"
+      - CONF_PATH: "${CRAFT_PART_BUILD}/edk2/Conf"
+      - PACKAGES_PATH: "${CRAFT_PART_BUILD}/edk2:${CRAFT_PART_BUILD}/edk2-platforms"
+      - ACTIVE_PLATFORM: "edk2-platforms/Platform/StandaloneMm/PlatformStandaloneMmPkg/PlatformStandaloneMmRpmb.dsc"
+    override-pull: |
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        git clone --depth=1 --branch edk2-stable202408.01 https://github.com/tianocore/edk2.git
+        git clone https://github.com/tianocore/edk2-platforms.git
+        cd edk2-platforms
+        git checkout dff92b84f79268deb1684604598f07053cc49120
+      fi
+    override-build: |
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        cd edk2
+        git submodule init && git submodule update --init --recursive
+        cd ${CRAFT_PART_BUILD}
+        source edk2/edksetup.sh
+        make -C edk2/BaseTools
+        build -p $ACTIVE_PLATFORM -b RELEASE -a AARCH64 -t GCC5 -n $(nproc)
+        cp Build/MmStandaloneRpmb/RELEASE_GCC5/FV/BL32_AP_MM.fd "${CRAFT_PART_INSTALL}"
+      fi
+    prime:
+      - -*
+
   optee-os:
     after:
+      - edk2-submodule
       - libefuse-pta-prebuilt
       - optee-fde
     plugin: nil
@@ -133,6 +219,7 @@ parts:
     source-commit: a120426f1e58d710f26e6e492205ff0f0721d6e6
     source-depth: 1
     build-environment:
+      - SOURCE_TAG: rity-kirkstone-v24.1
       - CROSS_COMPILE: "${CRAFT_ARCH_TRIPLET}-"
       - CFG_ARM64_core: y
       - CROSS_COMPILE_core: "${CRAFT_ARCH_TRIPLET}-"
@@ -147,23 +234,43 @@ parts:
       - CFG_TZDRAM_SIZE: 0x00a00000
       - CFG_EFUSE_ENABLE: y
       - LIBDIR: ${CRAFT_STAGE}/usr/lib/
-      ### Genio 510 EVK
       - PLATFORM: mediatek-mt8370
       - CFG_DRAM_SIZE: 0x100000000
       - SOC_PLATFORM: mt8370
     override-pull: |
       craftctl default
-      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/rity-kirkstone-v24.0/recipes-security/optee/optee-os/"
-      wget ${SRC_URL}/0001-allow-setting-sysroot-for-libgcc-lookup.patch
-      wget ${SRC_URL}/0002-allow-setting-sysroot-for-clang.patch
-      wget ${SRC_URL}/0003-core-add-support-for-EARLY_TA_DIR.patch
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-security/optee/optee-os/"
+      curl -L -O ${SRC_URL}/0001-allow-setting-sysroot-for-libgcc-lookup.patch
+      curl -L -O ${SRC_URL}/0002-allow-setting-sysroot-for-clang.patch
+      curl -L -O ${SRC_URL}/0003-core-add-support-for-EARLY_TA_DIR.patch
       echo "applying required MediaTek patches"
       git apply -v \
         0001-allow-setting-sysroot-for-libgcc-lookup.patch \
         0002-allow-setting-sysroot-for-clang.patch \
         0003-core-add-support-for-EARLY_TA_DIR.patch
     override-build: |
-      make -j$(nproc) V=1 all
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      # Add FDE TA
+      cp -r ${CRAFT_STAGE}/optee-fde/ta/fde_key_handler ${CRAFT_PART_BUILD}/ta/
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        # CFG_REE_FS_ALLOW_RESET: Enable it for xtest. It should be disabled in the production image.
+        # Build early TA
+        make -j$(nproc) V=1 LIBDIR=${LIBDIR} \
+          CFG_STMM_PATH=${CRAFT_STAGE}/BL32_AP_MM.fd CFG_CORE_DYN_SHM=y \
+          CFG_RPMB_FS=y CFG_RPMB_FS_DEV_ID=0 CFG_RPMB_WRITE_KEY=y CFG_REE_FS_ALLOW_RESET=y \
+          all
+        # Build tee.bin with early TA
+        make -j$(nproc) V=1 LIBDIR=${LIBDIR} \
+          CFG_STMM_PATH=${CRAFT_STAGE}/BL32_AP_MM.fd CFG_CORE_DYN_SHM=y \
+          CFG_RPMB_FS=y CFG_RPMB_FS_DEV_ID=0 CFG_RPMB_WRITE_KEY=y CFG_REE_FS_ALLOW_RESET=y \
+          EARLY_TA_PATHS="out/arm-plat-mediatek/ta/fde_key_handler/fd1b2a86-3668-11eb-adc1-0242ac120002.stripped.elf" all
+      else
+        # Build early TA
+        make -j$(nproc) V=1 LIBDIR=${LIBDIR} all
+        # Build tee.bin with early TA
+        make -j$(nproc) V=1 LIBDIR=${LIBDIR} \
+          EARLY_TA_PATHS="out/arm-plat-mediatek/ta/fde_key_handler/fd1b2a86-3668-11eb-adc1-0242ac120002.stripped.elf" all
+      fi
       cp out/arm-plat-mediatek/core/tee.bin "${CRAFT_PART_INSTALL}"
     prime:
       - -*
@@ -173,7 +280,7 @@ parts:
     source-type: git
     source: https://gitlab.com/mediatek/aiot/rity/libdram-prebuilt.git
     #source-branch: main
-    source-commit: 6d52afd8a5dc2842df71e64e4cfc9c5f324eed1b
+    source-commit: 14a03b453ba9e34095423282ef275c0e98355888
     source-depth: 1
     organize:
       genio-700-evk: usr/lib
@@ -187,7 +294,7 @@ parts:
     source-type: git
     source: https://gitlab.com/mediatek/aiot/bsp/libbase-prebuilt.git
     #source-branch: main
-    source-commit: 3207290d77f240f388ece174658e9c9d57de8daa
+    source-commit: 331e57c2afef69fc52314df2562741a3dcb6be46
     source-depth: 1
     organize:
       mt8370: usr/lib
@@ -196,19 +303,50 @@ parts:
     prime:
       - -*
 
+  test-keys:
+    plugin: nil
+    build-environment:
+      - SOURCE_TAG: rity-kirkstone-v24.1
+    override-pull: |
+      craftctl default
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/trusted-firmware-a/files/"
+      curl -L -O ${SRC_URL}/rot_key.pem
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/mtk-secure-boot-tools/test-keys/"
+      curl -L -O ${SRC_URL}/da.pem
+      curl -L -O ${SRC_URL}/efuse.pem
+      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-bsp/u-boot/files/"
+      curl -L -O ${SRC_URL}/u-boot.crt
+      curl -L -O ${SRC_URL}/u-boot.key
+      curl -L -O ${SRC_URL}/u-boot-img.crt
+      curl -L -O ${SRC_URL}/u-boot-img.key
+      curl -L -O ${SRC_URL}/secure-cap.dts
+      curl -L -O ${SRC_URL}/u-boot-cap.crt
+      curl -L -O ${SRC_URL}/u-boot-cap.key
+      cp *.pem *.crt *.key "${CRAFT_PART_INSTALL}"
+    override-build: |
+      cert-to-efi-sig-list u-boot-cap.crt u-boot-cap
+      dtc -I dts -O dtb -o secure-cap.dtbo secure-cap.dts
+      cp secure-cap.dtbo "${CRAFT_PART_INSTALL}"
+    organize:
+      '*': keys/
+    prime:
+      - -*
+
   trusted-firmware-a:
     after:
-      - u-boot-mtk
-      - optee-os
       - libdram-prebuilt
       - libbase-prebuilt
+      - optee-os
+      - test-keys
+      - u-boot-mtk
     plugin: nil
     source-type: git
     source: https://gitlab.com/mediatek/aiot/bsp/trusted-firmware-a.git
     #source-branch: mtk-v2.6
-    source-commit: e576fd55f92b3c116ef27492a7f98a046b21c2be
+    source-commit: f714728cde6ed514185c3d2edbf844177224e39d
     source-depth: 1
     build-environment:
+      - SOURCE_TAG: rity-kirkstone-v24.1
       - CROSS_COMPILE: "${CRAFT_ARCH_TRIPLET}-"
       - PLATFORM: mt8188
       - PLAT_HW_CRYPTO: 1
@@ -216,32 +354,186 @@ parts:
       - LIBBASE: ${CRAFT_STAGE}/usr/lib/libbase.a
       - BL32: ${CRAFT_STAGE}/tee.bin
       - BL33: ${CRAFT_STAGE}/u-boot.bin
-      - MEDIA: emmc
+      - STORAGE_UFS: 0
+      - KEY_SIZE: 3072
     override-pull: |
       craftctl default
-      SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/rity-kirkstone-v24.0/recipes-bsp/trusted-firmware-a/files/"
-      wget ${SRC_URL}/0001-tf-a-auth-add-support-for-HW-crypto.patch
-      echo "applying required MediaTek patches"
-      git apply -v 0001-tf-a-auth-add-support-for-HW-crypto.patch
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$PLATFORM" != "mt8365" ]; then
+          SRC_URL="https://gitlab.com/mediatek/aiot/rity/meta-mediatek-bsp/-/raw/${SOURCE_TAG}/recipes-bsp/trusted-firmware-a/files/"
+          curl -L -O ${SRC_URL}/0001-tf-a-auth-add-support-for-HW-crypto.patch
+          echo "applying required MediaTek patches"
+          git apply -v 0001-tf-a-auth-add-support-for-HW-crypto.patch
+      fi
+      # git clone submodule for secure boot
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        git clone --branch v2.26.0 https://github.com/Mbed-TLS/mbedtls.git
+        cd mbedtls
+        git checkout e483a77c85e1f9c1dd2eb1c5a8f552d2617fe400
+        cd -
+      fi
     override-build: |
-      make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
-        BUILD_BASE=${CRAFT_PART_BUILD}/build \
-        OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
-        LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
-        BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
-        bl31
-      make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
-        BUILD_BASE=${CRAFT_PART_BUILD}/build \
-        OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
-        LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
-        BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
-        bl2
-      cp build/${PLATFORM}/release/bl2.bin bl2.img.tmp
-      truncate -s%4 bl2.img.tmp
-      ${CRAFT_STAGE}/mkimage -T mtk_image -a 0x201000 -e 0x201000 -n "media=${MEDIA};arm64=1" -d bl2.img.tmp bl2.img
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
+          STORAGE_UFS=${STORAGE_UFS} \
+          BUILD_BASE=${CRAFT_PART_BUILD}/build \
+          OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
+          LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
+          BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
+          MBEDTLS_DIR=mbedtls TRUSTED_BOARD_BOOT=1 GENERATE_COT=1 ROT_KEY=${CRAFT_STAGE}/keys/rot_key.pem KEY_SIZE=${KEY_SIZE} \
+          bl31
+        make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
+          STORAGE_UFS=${STORAGE_UFS} \
+          BUILD_BASE=${CRAFT_PART_BUILD}/build \
+          OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
+          LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
+          BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
+          MBEDTLS_DIR=mbedtls TRUSTED_BOARD_BOOT=1 GENERATE_COT=1 ROT_KEY=${CRAFT_STAGE}/keys/rot_key.pem KEY_SIZE=${KEY_SIZE}\
+          bl2
+      else
+        make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
+          STORAGE_UFS=${STORAGE_UFS} \
+          BUILD_BASE=${CRAFT_PART_BUILD}/build \
+          OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
+          LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
+          BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
+          bl31
+        make -j$(nproc) V=1 E=0 PLAT=${PLATFORM} SPD=opteed PLAT_AB_BOOT_ENABLE=1 PLAT_HW_CRYPTO=${PLAT_HW_CRYPTO} \
+          STORAGE_UFS=${STORAGE_UFS} \
+          BUILD_BASE=${CRAFT_PART_BUILD}/build \
+          OPENSSL_DIR=/usr/lib/${CRAFT_ARCH_TRIPLET} \
+          LIBDRAM=${LIBDRAM} LIBBASE=${LIBBASE} \
+          BL32=${BL32} BL33=${BL33} NEED_BL32=yes NEED_BL33=yes CFLAGS+=-DNEED_BL32 \
+          bl2
+      fi
+      cp build/${PLATFORM}/release/bl31.bin "${CRAFT_PART_INSTALL}"
+      cp build/${PLATFORM}/release/bl2.bin "${CRAFT_PART_INSTALL}"
+    prime:
+      - -*
+
+  device-tree:
+    after:
+      - test-keys
+    plugin: nil
+    build-environment:
+      - SOURCE_TAG: rity-kirkstone-v24.1
+      - DEBIAN_FRONTEND: noninteractive
+      - FW_IMG_SIZE: 32768
+      - SECTOR_SIZE: 512
+      - BOARD_DTB: genio-510-evk.dtb
+      - BOARD_DTBO_DIR: genio-510-evk
+      - SOC_DTBO_DIR: mt8370
+      - INSTDIR: genio-510-evk
+    override-pull: |
+      craftctl default
+      # Download linux-modules-*-mtk_*_arm64.deb for dtb and dtbo
+      chdist -d tmp -a arm64 create ubuntu
+      cp -vr ${CRAFT_PROJECT_DIR}/helpers/cross-sources.list tmp/ubuntu/etc/apt/sources.list.d
+      chdist -d tmp -a arm64 apt-get ubuntu update
+      IMG_PKG_NAME=$(chdist -d tmp -a arm64 apt-cache ubuntu depends linux-image-mtk | grep 'Depends:' | awk -F: '{print $2}')
+      MODULE_PKG_NAME=$(chdist -d tmp -a arm64 apt-cache ubuntu depends ${IMG_PKG_NAME} | grep 'Depends:' | grep 'linux-modules-.*-mtk' | awk -F: '{print $2}')
+      chdist -d tmp -a arm64 apt-get ubuntu download ${MODULE_PKG_NAME}
+      dpkg-deb --extract linux-modules-*-mtk_*_arm64.deb tmp
+
+      find tmp/lib/firmware/*/device-tree/mediatek/{${BOARD_DTB},${BOARD_DTBO_DIR},${SOC_DTBO_DIR}} \
+        \( -name '*.dtb' -or -name '*.dtbo' \) \
+        -exec install -D -t tmp/FIRMWARE/mediatek/${INSTDIR}/ {} +
+
+      # Download fdt.its for creating signed DT fitimage
+      curl -L -O https://gitlab.com/mediatek/aiot/rity/meta-rity/-/raw/${SOURCE_TAG}/meta/recipes-core/board-assets/files/fdt.its
+    override-build: |
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        for f in `find tmp/FIRMWARE/mediatek/ -type f -name "*.dtb*"`; do
+          filepath="${f%/*}"
+          filename="${f##*/}"
+          cp fdt.its "$filepath"/fdt.its
+          sed -i 's/FDTBIN/'"$filename"'/g' "$filepath"/fdt.its
+          mkimage -F -k ${CRAFT_STAGE}/keys/ -f "$filepath"/fdt.its "$filepath"/"$filename"
+          rm "$filepath"/fdt.its
+        done
+      fi
+
+      mkfs.vfat -n "firmware" -S ${SECTOR_SIZE} -C firmware.vfat ${FW_IMG_SIZE}
+      mcopy -i firmware.vfat -s tmp/FIRMWARE ::
+      cp firmware.vfat "${CRAFT_PART_INSTALL}"
+    organize:
+      '*': usr/lib/boot-firmware/
+
+  sign-boot-firmware:
+    after:
+      - boot-firmware
+      - optee-os
+      - test-keys
+      - trusted-firmware-a
+      - u-boot-mtk
+    plugin: nil
+    build-environment:
+      - GIT_BRANCH: python3
+      - COMMIT_ID: 50dbe8868df51adfc197a1395a202583e2ddbd2d
+      - MEDIA: emmc
+      - BL2: ${CRAFT_STAGE}/bl2.bin
+      - BL31: ${CRAFT_STAGE}/bl31.bin
+      - BL32: ${CRAFT_STAGE}/tee.bin
+      - BL33: ${CRAFT_STAGE}/u-boot.bin
+      - PLATFORM: mt8390
+      - SOC: MT8370
+      - SIGN_EN: 1
+      - SIGN_ARGS: sha384
+    override-pull: |
+      set +x
+      if [ -z "${GIT_TOKEN:-}" ]; then
+        TOKEN_FILE="${CRAFT_PROJECT_DIR}/configs/token"
+        if [ -f "$TOKEN_FILE" ]; then
+          export GIT_TOKEN=$(<"$TOKEN_FILE")
+        else
+          echo "ERROR: GIT_TOKEN is not set and token file not found at $TOKEN_FILE" >&2
+          exit 1
+        fi
+      fi
+      # MediaTek tools for secure boot: Repositories that require NDA contract to access
+      git clone -b ${GIT_BRANCH} https://oauth2:${GIT_TOKEN}@gitlab.com/mediatek/aiot/nda/mtk-secure-boot-tools.git .
+      git checkout ${COMMIT_ID}
+    override-build: |
+      source ${CRAFT_PROJECT_DIR}/configs/snap.cfg
+      if [ "$CONFIG_SECURE_BOOT" == "y" ]; then
+        ### Create lk.sign for lk.bin
+        cat ${CRAFT_STAGE}/usr/lib/boot-firmware/lk.bin | openssl dgst -binary -${SIGN_ARGS} > lk_digest
+        openssl pkeyutl -sign -inkey ${CRAFT_STAGE}/keys/da.pem -in lk_digest -out lk.sign \
+          -pkeyopt digest:${SIGN_ARGS} -pkeyopt rsa_padding_mode:pss -pkeyopt rsa_pss_saltlen:32
+        cp lk.sign "${CRAFT_PART_INSTALL}"
+        ### Sign bl2.img and create auth_sv5.auth and keyhash
+        cp ${BL2} bl2.img
+        make -C configs PLATFORM=${PLATFORM} SOC=${SOC} \
+          SBC_KEY=${CRAFT_STAGE}/keys/efuse.pem DA_KEY=${CRAFT_STAGE}/keys/da.pem EFUSE_KEY=${CRAFT_STAGE}/keys/efuse.pem \
+          SIGN_EN=${SIGN_EN} OUTDIR=${CRAFT_PART_BUILD}/
+        python3 -m sign-image_v2.pbp -i key.ini -g pl_gfh_config_pss.ini -func sign -o bl2.img bl2.img -s ${SIGN_EN}
+        python3 -m secure_chip_tools.dev-info-hdr-tool ${MEDIA} bl2.img bl2.img
+        # efuse.pem and sbc.pem and the same pem
+        python3 -m sign-image_v2.pbp -j ${CRAFT_STAGE}/keys/efuse.pem -func keyhash_pss -o secure/keyhash -s ${SIGN_EN}
+        cp secure/auth_sv5.auth "${CRAFT_PART_INSTALL}"
+        cp secure/keyhash "${CRAFT_PART_INSTALL}"
+        ### Sign fip.bin
+        cert_create -n --tfw-nvctr 0 --ntfw-nvctr 0 --trusted-key-cert trusted_key.crt \
+          --key-alg rsa --key-size 3072 --hash-alg sha256 --rot-key ${CRAFT_STAGE}/keys/rot_key.pem \
+          --soc-fw-cert soc_fw_content.crt --soc-fw-key-cert soc_fw_key.crt \
+          --tos-fw-cert tos_fw_content.crt --tos-fw-key-cert tos_fw_key.crt \
+          --nt-fw-cert nt_fw_content.crt --nt-fw-key-cert nt_fw_key.crt \
+          --soc-fw ${BL31} --tos-fw ${BL32} --nt-fw ${BL33}
+        fiptool create --trusted-key-cert trusted_key.crt \
+          --soc-fw-cert soc_fw_content.crt --soc-fw-key-cert soc_fw_key.crt \
+          --tos-fw-cert tos_fw_content.crt --tos-fw-key-cert tos_fw_key.crt \
+          --nt-fw-cert nt_fw_content.crt --nt-fw-key-cert nt_fw_key.crt \
+          --soc-fw ${BL31} --tos-fw ${BL32} --nt-fw ${BL33} \
+          fip.bin
+      else
+        cp ${BL2} bl2.img.tmp
+        truncate -s%4 bl2.img.tmp
+        ${CRAFT_STAGE}/mkimage -T mtk_image -a 0x201000 -e 0x201000 -n "media=${MEDIA};arm64=1" -d bl2.img.tmp bl2.img
+        fiptool create --soc-fw ${BL31} --tos-fw ${BL32} --nt-fw ${BL33} fip.bin
+      fi
       cp bl2.img "${CRAFT_PART_INSTALL}"
-      fiptool create --soc-fw build/${PLATFORM}/release/bl31.bin \
-        --tos-fw ${BL32} --nt-fw ${BL33} fip.bin
       cp fip.bin "${CRAFT_PART_INSTALL}"
     organize:
       '*': usr/lib/boot-firmware/
