@@ -1,0 +1,8 @@
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy main universe multiverse restricted
+deb-src [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy main universe multiverse restricted
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-updates main universe multiverse restricted
+deb-src [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-updates main universe multiverse restricted
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-security main universe multiverse restricted
+deb-src [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-security main universe multiverse restricted
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-proposed main universe multiverse restricted
+deb-src [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ jammy-proposed main universe multiverse restricted
