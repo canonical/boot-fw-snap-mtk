@@ -1,0 +1,35 @@
+# Replace the following fields for your board.
+# Naming convention: boot-fw-{BOARD-VENDOR}-{BOARD-NAME}-{BOARD-VER}
+# (lowercase only, no dashes inside a field, max 40 characters).
+# Example below targets the MediaTek Genio 1200 EVK P1V2 platform.
+name: boot-fw-mtk-g1200evk-p1v2
+base: core24
+# version: based on the MediaTek BSP (Rity release) version number that the
+# boot firmware is built from.
+# See https://genio.mediatek.com/doc/iot-yocto/latest/sw/yocto/releases.html
+version: '26.0'
+summary: Boot firmware for MediaTek Genio 1200 EVK P1V2 platform
+description: |
+  This snap includes boot firmware for MediaTek Genio 1200 EVK P1V2 platform.
+  Boot firmware includes lk.bin, bl2.img, fip.bin, u-boot-initial-env, and
+  device tree.
+
+grade: stable
+confinement: strict
+platforms:
+  mtk-genio:
+    build-on: [arm64, amd64]
+    build-for: arm64
+
+parts:
+  boot-firmware:
+    source: boot-firmware/
+    plugin: dump
+    organize:
+      '*': usr/lib/boot-firmware/
+
+  copyright:
+    source: copyright
+    plugin: dump
+    organize:
+      '*': usr/share/doc/boot-firmware/
